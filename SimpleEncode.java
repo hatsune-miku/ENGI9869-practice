@@ -11,31 +11,31 @@ public class SimpleEncode {
         "abcdefghijklmnopqrstuvwxyz" +
         "0123456789+-"; // 26+26+10+2=64
 
+    protected final static char[] ALPHABET_ARRAY = ALPHABET.toCharArray();
+
+    protected final static int[] ALPHABET_REVERSE = new int[123];
+
     protected final static int SPLIT_SIZE = 4096;
+
+    static {
+        for (int i = 0; i < 123; ++i) {
+            ALPHABET_REVERSE[i] = -1;
+        }
+        for (char c = 'A'; c <= 'Z'; ++c) {
+            ALPHABET_REVERSE[c] = c - 'A';
+        }
+        for (char c = 'a'; c <= 'z'; ++c) {
+            ALPHABET_REVERSE[c] = c - 'a' + 26;
+        }
+        for (char c = '0'; c <= '9'; ++c) {
+            ALPHABET_REVERSE[c] = c - '0' + 26 + 26;
+        }
+        ALPHABET_REVERSE['+'] = 62;
+        ALPHABET_REVERSE['-'] = 63;
+    }
 
     protected static boolean isControlCharacter(char c) {
         return c == '?' || c == '!' || c == '@';
-    }
-
-    protected static int alphabetIndexOf(char c) {
-        if (c >= 'A' && c <= 'Z') {
-            return c - 'A';
-        }
-        else if (c >= 'a' && c <= 'z') {
-            return c - 'a' + 26;
-        }
-        else if (c >= '0' && c <= '9') {
-            return c - '0' + 26 + 26;
-        }
-        else if (c == '+') {
-            return 62;
-        }
-        else if (c == '-') {
-            return 63;
-        }
-        else {
-            return -1;
-        }
     }
 
     public static String encode(byte[] data) {
@@ -51,7 +51,7 @@ public class SimpleEncode {
     // ! = ~~
     // ? = ~~~
     protected static String encodeImpl(byte[] data, int startIndexInclusive, int endIndexExclusive) {
-        StringBuilder builder = new StringBuilder();
+        StringBuilder builder = new StringBuilder(endIndexExclusive - startIndexInclusive);
         for (int i = startIndexInclusive; i < endIndexExclusive; ++i) {
             short ub = (short) (data[i] + 128);
             if (ub >= (short) 192) {
@@ -63,7 +63,7 @@ public class SimpleEncode {
             else if (ub >= (short) 64) {
                 builder.append("@");
             }
-            builder.append(ALPHABET.charAt(ub % (byte) 64));
+            builder.append(ALPHABET_ARRAY[ub % (byte) 64]);
         }
         return builder.toString();
     }
@@ -88,6 +88,7 @@ public class SimpleEncode {
                 ++size;
             }
         }
+
         byte[] ret = new byte[size];
 
         for (int i = startIndexInclusive; i < endIndexExclusive; ++i) {
@@ -104,7 +105,7 @@ public class SimpleEncode {
                 }
             }
             else {
-                int index = alphabetIndexOf(c);
+                int index = ALPHABET_REVERSE[c]; // alphabetIndexOf(c);
                 if (index == -1) {
                     throw new InvalidDataException("Invalid character: " + c);
                 }
@@ -118,7 +119,7 @@ public class SimpleEncode {
 
     protected static WorkerInfo calculateWorkerInfo(int totalLength) {
 
-        final int availableProcessors = Runtime.getRuntime().availableProcessors();
+        final int availableProcessors = 4 * Runtime.getRuntime().availableProcessors();
 
         // Confirm required workers.
         int workers = totalLength / SPLIT_SIZE;
@@ -146,12 +147,12 @@ public class SimpleEncode {
         return new WorkerInfo(workers, splitSize);
     }
 
-    public static String encodeFast(final byte[] data, int timeoutMilliseconds)
+    public static String[] encodeFast(final byte[] data, int timeoutMilliseconds)
         throws IllegalArgumentException, InterruptedException, TimeoutException {
         final int totalLength = data.length;
 
         if (totalLength == 0) {
-            return "";
+            return new String[0];
         }
 
         WorkerInfo workerInfo = calculateWorkerInfo(totalLength);
@@ -168,8 +169,6 @@ public class SimpleEncode {
             final int endIndexExclusive = Math.min(totalLength, (i + 1) * splitSize);
             final int resultIndex = i;
             pool.execute(() -> {
-                // System.out.println("Thread " + resultIndex + ": " + startIndexInclusive + " ~ " + endIndexExclusive);
-
                 // The lock is not necessary because they are writing to different locations.
                 results[resultIndex] = encodeImpl(data, startIndexInclusive, endIndexExclusive);
             });
@@ -178,15 +177,15 @@ public class SimpleEncode {
         if (!pool.awaitTermination(timeoutMilliseconds, TimeUnit.MILLISECONDS)) {
             throw new TimeoutException("Timeout.");
         }
-        return String.join("", results);
+        return results;
     }
 
-    public static byte[] decodeFast(String data, int timeoutMilliseconds)
-        throws IllegalArgumentException, InterruptedException, TimeoutException, InvalidDataException, IOException {
+    public static byte[][] decodeFast(String data, int timeoutMilliseconds)
+        throws IllegalArgumentException, InterruptedException, TimeoutException, InvalidDataException {
         final int totalLength = data.length();
 
         if (totalLength == 0) {
-            return new byte[0];
+            return new byte[0][];
         }
 
         WorkerInfo workerInfo = calculateWorkerInfo(totalLength);
@@ -218,8 +217,6 @@ public class SimpleEncode {
             final int r = endIndexExclusive;
             final int resultIndex = i;
             pool.execute(() -> {
-                // System.out.println("Thread " + resultIndex + ": " + startIndexInclusive + " ~ " + endIndexExclusive);
-
                 // The lock is not necessary because they are writing to different locations.
                 try {
                     results[resultIndex] = decodeImpl(data, l, r);
@@ -237,23 +234,20 @@ public class SimpleEncode {
             throw new TimeoutException("Timeout.");
         }
 
-        int size = 0;
-        int offset = 0;
+        return results;
+    }
 
-        // Calculate the size of the output buffer.
+    public static byte[] flattenResults(byte[][] results) {
+        int size = 0;
         for (byte[] bytes : results) {
             size += bytes.length;
         }
-
-        // Alloc the output buffer.
         byte[] ret = new byte[size];
-
-        // Concatenate results.
+        int offset = 0;
         for (byte[] bytes : results) {
             System.arraycopy(bytes, 0, ret, offset, bytes.length);
             offset += bytes.length;
         }
-
         return ret;
     }
 

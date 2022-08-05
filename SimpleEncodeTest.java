@@ -32,17 +32,35 @@ class SimpleEncodeTest {
         String s = "VERY LONG UNICODE TEST 超长字符测试"
             .repeat(100 * 32768);
 
-        long now = System.currentTimeMillis();
         runMultiThread(s);
-        long elapsed = System.currentTimeMillis() - now;
-        System.out.println(">> Multi-thread SimpleEncode took " + elapsed + "ms");
 
-        /////////////////////////////////////////////////////////////////////////
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+
+        long now;
+        long elapsed;
 
         now = System.currentTimeMillis();
-        Base64.getDecoder().decode(Base64.getEncoder().encode(s.getBytes(StandardCharsets.UTF_8)));
+        try {
+            SimpleEncode.decodeFast(String.join(
+                "", SimpleEncode.encodeFast(bytes, 1000)
+            ), 1000);
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+        }
+        elapsed = System.currentTimeMillis() - now;
+        System.out.println(">> Multi-thread SimpleEncode took " + elapsed + "ms");
+
+        now = System.currentTimeMillis();
+        Base64.getDecoder().decode(Base64.getEncoder().encode(bytes));
         elapsed = System.currentTimeMillis() - now;
         System.out.println(">> Single-thread Base64 took " + elapsed + "ms");
+    }
+
+    @Test
+    void test22() {
+        String s = "The world opens itself before those with noble hearts.";
+        System.out.println(wrapEncode(s, true));
     }
 
     String wrapEncode(String s, boolean multiThread) {
@@ -50,7 +68,7 @@ class SimpleEncodeTest {
         String ret = "Unknown Error";
         try {
             if (multiThread) {
-                ret = SimpleEncode.encodeFast(bytes, 1000);
+                ret = String.join("", SimpleEncode.encodeFast(bytes, 1000));
             }
             else {
                 ret = SimpleEncode.encode(bytes);
@@ -63,10 +81,10 @@ class SimpleEncodeTest {
     }
 
     String wrapDecode(String s, boolean multiThread) {
-        byte[] ret = "Unknown Error".getBytes(StandardCharsets.UTF_8);
+        byte[] ret;
         try {
             if (multiThread) {
-                ret = SimpleEncode.decodeFast(s, 1000);
+                ret = SimpleEncode.flattenResults(SimpleEncode.decodeFast(s, 1000));
             }
             else {
                 ret = SimpleEncode.decode(s);
